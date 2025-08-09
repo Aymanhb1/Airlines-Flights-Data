@@ -1,4 +1,3 @@
-
 import streamlit as st
 import joblib
 import pandas as pd
@@ -12,60 +11,77 @@ import tempfile
 google_drive_file_id = '1cfO1LkDZNc14qpZqI4kXLtwYSrBklVE3'  # Correct file ID from Google Drive link
 model_filename = 'best_random_forest_model.joblib'
 
-# Function to download the model file from Google Drive with better error handling
+# Function to download the model file from Google Drive using gdown (more reliable)
 @st.cache_resource
 def load_model_from_drive(file_id, destination):
     try:
         if not os.path.exists(destination):
             st.info(f"Downloading model from Google Drive (ID: {file_id})...")
             
-            # Try the direct download URL first
-            download_url = f'https://drive.google.com/uc?export=download&id={file_id}'
-            
-            response = requests.get(download_url, stream=True, timeout=30)
-            
-            # Check if we got a redirect (common for large files)
-            if 'confirm=' in response.url:
-                st.info("Large file detected, handling confirmation...")
-                # Extract confirmation token
-                confirm_token = response.url.split('confirm=')[1].split('&')[0]
-                download_url = f'https://drive.google.com/uc?export=download&id={file_id}&confirm={confirm_token}'
-                response = requests.get(download_url, stream=True, timeout=60)
-            
-            response.raise_for_status()
-            
-            # Check if we actually got the file (not an HTML error page)
-            content_type = response.headers.get('content-type', '')
-            if 'text/html' in content_type:
-                st.error("Received HTML instead of file. Check if the Google Drive link is public and the file ID is correct.")
-                st.error("Make sure your Google Drive file sharing is set to 'Anyone with the link can view'")
-                return None
-            
-            # Download the file
-            total_size = int(response.headers.get('content-length', 0))
-            downloaded_size = 0
-            
-            with open(destination, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded_size += len(chunk)
-            
-            # Verify the download
-            actual_size = os.path.getsize(destination)
-            st.success(f"Model downloaded successfully. Size: {actual_size:,} bytes")
-            
-            if actual_size < 1000:  # Suspiciously small file
-                st.warning("Downloaded file is very small. This might indicate a download error.")
-                # Read first few bytes to check if it's HTML
-                with open(destination, 'r', errors='ignore') as f:
-                    content_preview = f.read(100)
-                    if '<html>' in content_preview.lower():
-                        st.error("Downloaded file appears to be HTML (error page), not the model file.")
-                        return None
+            # Use gdown which handles Google Drive downloads better
+            try:
+                import gdown
+                url = f'https://drive.google.com/uc?id={file_id}'
+                gdown.download(url, destination, quiet=False)
+                
+                # Verify the download
+                actual_size = os.path.getsize(destination)
+                st.success(f"Model downloaded successfully. Size: {actual_size:,} bytes")
+                
+                # Check if file is too small (likely HTML error page)
+                if actual_size < 10000:  # Model should be much larger
+                    with open(destination, 'r', errors='ignore') as f:
+                        content_preview = f.read(200)
+                        if '<html>' in content_preview.lower() or 'doctype html' in content_preview.lower():
+                            st.error("Downloaded HTML error page instead of model file.")
+                            st.error("This usually means the file is too large for direct download.")
+                            st.error("Try using a smaller model or a different hosting service.")
+                            os.remove(destination)  # Remove the bad file
+                            return None
+                            
+            except ImportError:
+                st.error("gdown library not found. Falling back to requests method...")
+                # Fallback to requests method with better handling
+                session = requests.Session()
+                
+                # First request to get the confirmation token
+                response = session.get(f'https://drive.google.com/uc?export=download&id={file_id}', stream=True)
+                
+                # Look for confirmation token in the response
+                token = None
+                for line in response.iter_lines():
+                    if b'confirm=' in line:
+                        # Extract token from the line
+                        line_str = line.decode('utf-8', errors='ignore')
+                        if 'confirm=' in line_str:
+                            token = line_str.split('confirm=')[1].split('&')[0].split('"')[0]
+                            break
+                
+                if token:
+                    st.info("Large file detected, using confirmation token...")
+                    # Download with confirmation token
+                    response = session.get(f'https://drive.google.com/uc?export=download&id={file_id}&confirm={token}', stream=True)
+                else:
+                    response = session.get(f'https://drive.google.com/uc?export=download&id={file_id}', stream=True)
+                
+                response.raise_for_status()
+                
+                with open(destination, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                
+                actual_size = os.path.getsize(destination)
+                st.success(f"Model downloaded successfully. Size: {actual_size:,} bytes")
                         
         else:
-            st.info("Model file already exists locally.")
+            # Delete existing file if it's too small (likely corrupted)
+            if os.path.getsize(destination) < 10000:
+                st.warning("Existing file is too small, re-downloading...")
+                os.remove(destination)
+                return load_model_from_drive(file_id, destination)
+            else:
+                st.info("Model file already exists locally.")
         
         # Try to load the model
         st.info("Loading model...")
@@ -212,4 +228,3 @@ if st.button("🔮 Predict Flight Price", use_container_width=True):
     except Exception as e:
         st.error(f"An error occurred during prediction: {e}")
         st.error("Please check that all input values are valid.")
-    st.error(f"Error type: {type(e).__name__}")
