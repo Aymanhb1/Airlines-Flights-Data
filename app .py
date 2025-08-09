@@ -117,3 +117,23 @@ if st.sidebar.button("Predict Price"):
         st.write(f"The predicted price is: ₹{prediction[0]:,.2f}")
     except Exception as e:
         st.error(f"An error occurred during prediction: {e}")
+
+
+import os
+import joblib
+
+try:
+    # Check if file exists and its size
+    if os.path.exists('best_random_forest_model.joblib'):
+        file_size = os.path.getsize('best_random_forest_model.joblib')
+        st.write(f"File exists, size: {file_size} bytes")
+        
+        # Try to load with more detailed error info
+        model = joblib.load('best_random_forest_model.joblib')
+        st.success("Model loaded successfully!")
+    else:
+        st.error("Model file not found after download")
+        
+except Exception as e:
+    st.error(f"Detailed error: {str(e)}")
+    st.error(f"Error type: {type(e).__name__}")
